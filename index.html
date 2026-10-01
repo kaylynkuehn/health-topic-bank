@@ -196,7 +196,7 @@ footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-si
 </div>
 <div class="exp" id="exp">
   <span class="tally" id="tally"></span>
-  <input id="who" type="text" placeholder="Your name" autocomplete="name">
+  <input id="who" type="text" placeholder="Your name (so we know who)" autocomplete="name">
   <button type="button" id="copyFb">Copy feedback</button>
   <button type="button" class="primary" id="dlFb">Download</button>
   <p class="note" id="expnote">Your stars and comments are saved in this browser. Use Copy or Download to send them back.</p>
@@ -462,12 +462,14 @@ function startLocal(){
   document.body.classList.add("live","local");
   const who=document.getElementById("who");
   who.value=L.who||"";
-  who.oninput=()=>{ L.who=who.value.slice(0,60); NAMES.me=L.who||"You"; lsave(); tally(); };
+  who.oninput=()=>{ L.who=who.value.slice(0,60); NAMES.me=L.who||"You"; lsave(); tally(); paint(); };
   document.getElementById("copyFb").onclick=async function(){
+    if(!L.who){ who.focus(); who.style.borderColor="var(--accent)"; setTimeout(()=>who.style.borderColor="",2000); }
     try{ await navigator.clipboard.writeText(report()); this.textContent="Copied"; setTimeout(()=>this.textContent="Copy feedback",1600); }
     catch(_){ this.textContent="Press Cmd+C"; }
   };
   document.getElementById("dlFb").onclick=()=>{
+    if(!L.who){ who.focus(); who.style.borderColor="var(--accent)"; setTimeout(()=>who.style.borderColor="",2000); }
     const b=new Blob([report()],{type:"text/markdown"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(b);
