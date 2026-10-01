@@ -108,6 +108,22 @@ ul.ilist+.ibar{margin-top:9px}
 .ro{font-size:12.5px;color:var(--faint);font-style:italic;font-family:Newsreader,Georgia,serif}
 .cnt{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.05em;color:var(--accent);background:var(--accent-soft);border-radius:4px;padding:2px 6px;display:none}
 .cnt.show{display:inline}
+.exp{position:fixed;left:0;right:0;bottom:0;z-index:50;display:none;align-items:center;gap:10px;flex-wrap:wrap;
+  background:var(--panel);border-top:1px solid var(--line);padding:11px 16px;
+  box-shadow:0 -6px 20px rgba(0,0,0,.07)}
+body.local .exp{display:flex}
+body.local{padding-bottom:70px}
+.exp .tally{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--soft);margin-right:auto}
+.exp .tally b{color:var(--ink);font-weight:500}
+.exp input{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:7px 10px;
+  color:var(--ink);font-family:inherit;font-size:13px;width:150px}
+.exp input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.exp button{border:1px solid var(--accent);background:none;color:var(--accent);border-radius:7px;padding:7px 13px;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.exp button.primary{background:var(--accent);color:var(--on-accent)}
+.exp button:hover{opacity:.85}
+.exp .note{width:100%;font-family:Newsreader,Georgia,serif;font-style:italic;font-size:12.5px;color:var(--faint);margin:0}
+@media(max-width:620px){.exp .tally{width:100%;margin-bottom:2px}.exp input{flex:1;width:auto}}
 .more{margin-left:auto;display:inline-flex;align-items:center;gap:5px;
   font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
   color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:3px 9px 3px 10px;
@@ -163,6 +179,15 @@ footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-si
 <div class="empty" id="empty" hidden>No newsletter matches that.</div>
 
 <footer id="foot"></footer>
+</div>
+<div class="exp" id="exp">
+  <span class="tally" id="tally"></span>
+  <input id="who" type="text" placeholder="Your name" autocomplete="name">
+  <button type="button" id="copyFb">Copy feedback</button>
+  <button type="button" class="primary" id="dlFb">Download</button>
+  <p class="note" id="expnote">Your stars and comments are saved in this browser. Use Copy or Download to send them back.</p>
+</div>
+<div style="display:none">
 </div>
 
 <script>
@@ -326,7 +351,7 @@ async function star(id){
   if(!DB||!CANWRITE||!ME) return;
   MYSTARS.has(id)?MYSTARS.delete(id):MYSTARS.add(id);
   paint();
-  try{ await DB.doc("stars/"+ME).set({ids:[...MYSTARS]}); }
+  try{ await DB.doc("stars/"+ME).set({ids:[...MYSTARS]}); if(LOCAL) paint(); }
   catch(e){ CANWRITE=false; paint(); }
 }
 document.addEventListener("click",e=>{
@@ -334,11 +359,76 @@ document.addEventListener("click",e=>{
   if(b){ e.preventDefault(); e.stopPropagation(); star(b.dataset.star); }
 },true);
 
+/* ---------- local mode: stars + comments in this browser ---------- */
+const LK="htb.v1";
+let LOCAL=false, L={stars:[],ideas:{},who:""};
+function lload(){ try{ const r=localStorage.getItem(LK); if(r) L=Object.assign({stars:[],ideas:{},who:""},JSON.parse(r)); }catch(_){} }
+function lsave(){ try{ localStorage.setItem(LK,JSON.stringify(L)); }catch(_){} }
+
+function startLocal(){
+  LOCAL=true; lload();
+  ME="me"; CANWRITE=true;
+  MYSTARS=new Set(L.stars||[]);
+  STARS={}; MYSTARS.forEach(id=>STARS[id]=new Set(["me"]));
+  IDEAS={}; Object.keys(L.ideas||{}).forEach(k=>{ IDEAS[k]=(L.ideas[k]||[]).map((x,i)=>({id:k+i,text:x.text,by:"me",at:x.at})); });
+  NAMES.me = L.who || "You";
+  DB={ __local:true,
+    doc:()=>({ set:async()=>{ L.stars=[...MYSTARS]; lsave(); STARS={}; MYSTARS.forEach(id=>STARS[id]=new Set(["me"])); tally(); } }),
+    collection:()=>({ add:async(d)=>{
+        (L.ideas[d.card]=L.ideas[d.card]||[]).push({text:d.text,at:d.at}); lsave();
+        IDEAS[d.card]=L.ideas[d.card].map((x,i)=>({id:d.card+i,text:x.text,by:"me",at:x.at}));
+        paint(); tally();
+      } }) };
+  document.body.classList.add("live","local");
+  const who=document.getElementById("who");
+  who.value=L.who||"";
+  who.oninput=()=>{ L.who=who.value.slice(0,60); NAMES.me=L.who||"You"; lsave(); tally(); };
+  document.getElementById("copyFb").onclick=async function(){
+    try{ await navigator.clipboard.writeText(report()); this.textContent="Copied"; setTimeout(()=>this.textContent="Copy feedback",1600); }
+    catch(_){ this.textContent="Press Cmd+C"; }
+  };
+  document.getElementById("dlFb").onclick=()=>{
+    const b=new Blob([report()],{type:"text/markdown"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(b);
+    a.download="topic-bank-feedback"+(L.who?"-"+L.who.replace(/[^a-z0-9]+/gi,"-").toLowerCase():"")+".md";
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  };
+  tally(); paint();
+}
+
+function report(){
+  const byId={}; T.forEach(t=>byId[t.id]=t.n);
+  const starred=[...MYSTARS].filter(id=>byId[id]);
+  const cmt=Object.keys(L.ideas||{}).filter(k=>byId[k]&&L.ideas[k].length);
+  let s="# Health Topic Bank feedback\n\n";
+  if(L.who) s+="From: "+L.who+"\n";
+  s+="Date: "+new Date().toLocaleDateString(undefined,{year:"numeric",month:"long",day:"numeric"})+"\n\n";
+  s+="## Starred ("+starred.length+")\n\n";
+  s+= starred.length ? starred.map(id=>"- "+byId[id]).join("\n")+"\n\n" : "_None_\n\n";
+  s+="## Comments ("+cmt.reduce((a,k)=>a+L.ideas[k].length,0)+")\n\n";
+  if(!cmt.length) s+="_None_\n";
+  cmt.forEach(k=>{
+    s+="### "+byId[k]+"\n";
+    L.ideas[k].forEach(i=>{ s+="- "+i.text+"\n"; });
+    s+="\n";
+  });
+  return s;
+}
+
+function tally(){
+  const n=MYSTARS.size, c=Object.values(L.ideas||{}).reduce((a,v)=>a+v.length,0);
+  const el=document.getElementById("tally");
+  if(el) el.innerHTML="<b>"+n+"</b> starred · <b>"+c+"</b> comment"+(c===1?"":"s");
+  const ct=document.getElementById("starCt"); if(ct) ct.textContent=n;
+}
+
 (async()=>{
-  if(typeof claude==="undefined"||!claude||typeof claude.use!=="function") return;
   let db=null,user=null;
-  try{ [db,user]=await Promise.all([claude.use("db"),claude.use("user")]); }catch(_){ return; }
-  if(!db) return;
+  if(typeof claude!=="undefined" && claude && typeof claude.use==="function"){
+    try{ [db,user]=await Promise.all([claude.use("db"),claude.use("user")]); }catch(_){}
+  }
+  if(!db){ startLocal(); mountFilter(); return; }
   DB=db; USER=user;
   try{ ME = user ? await user.id() : null; }catch(_){}
   try{ const w = user ? await user.can("data.write") : null; CANWRITE = (w!==false) && !!ME; }catch(_){ CANWRITE=!!ME; }
@@ -369,8 +459,13 @@ document.addEventListener("click",e=>{
     paint(); counts();
   },()=>{});
 
+  mountFilter();
+})();
+
+function mountFilter(){
   const lb=document.getElementById("livebar");
-  lb.hidden=false;
+  if(!lb||lb.dataset.on) return;
+  lb.dataset.on="1"; lb.hidden=false;
   lb.innerHTML=`<div class="rowlabel">Feedback</div><button class="chip" id="onlyStar" aria-pressed="false">Starred only<span class="ct" id="starCt">0</span></button>`;
   document.getElementById("onlyStar").onclick=function(){
     fStar=!fStar; this.setAttribute("aria-pressed",fStar); render();
@@ -378,11 +473,11 @@ document.addEventListener("click",e=>{
   const _hit=hit;
   hit=function(t){ return _hit(t) && (!fStar || (STARS[t.id]&&STARS[t.id].size>0)); };
   counts();
-})();
+}
 
 function counts(){
   const el=document.getElementById("starCt");
-  if(el) el.textContent=Object.values(STARS).filter(s=>s.size>0).length;
+  if(el) el.textContent=LOCAL?MYSTARS.size:Object.values(STARS).filter(s=>s.size>0).length;
 }
 </script>
 </body>
