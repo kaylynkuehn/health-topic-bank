@@ -97,7 +97,21 @@ ul.ilist{list-style:none;margin:0;padding:0}
 ul.ilist li{padding:7px 0;border-bottom:1px solid var(--line2);font-size:13.5px;line-height:1.45}
 ul.ilist:empty{display:none}
 ul.ilist+.ibar{margin-top:9px}
-.iwho{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.05em;color:var(--faint);display:block;margin-top:2px}
+.iwho{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.05em;color:var(--faint);display:inline;margin-top:2px}
+.imeta{display:flex;align-items:baseline;gap:8px;margin-top:3px;flex-wrap:wrap}
+.iact{display:flex;gap:7px;margin-left:auto}
+.iact button{background:none;border:0;padding:0;cursor:pointer;color:var(--faint);
+  font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.05em;text-transform:uppercase}
+.iact button:hover{color:var(--accent);text-decoration:underline}
+.iact button.danger:hover{color:#b3261e}
+.iedit{display:flex;gap:6px;align-items:flex-start;margin-top:2px}
+.iedit textarea{flex:1;background:var(--bg);border:1px solid var(--accent);border-radius:7px;padding:6px 9px;
+  color:var(--ink);font-family:inherit;font-size:13px;line-height:1.4;resize:vertical;min-height:32px}
+.iedit textarea:focus{outline:none}
+.iedit .sv{background:var(--accent);color:var(--on-accent);border:0;border-radius:6px;padding:6px 11px;
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.iedit .cx{background:none;border:1px solid var(--line);color:var(--soft);border-radius:6px;padding:6px 10px;
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
 .ibar{display:flex;gap:6px;align-items:flex-start}
 .ibar textarea{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:7px 9px;
   color:var(--ink);font-family:inherit;font-size:13px;line-height:1.4;resize:vertical;min-height:34px}
@@ -317,7 +331,13 @@ function paint(){
     }
     const ul=c.querySelector("[data-ilist]");
     if(ul){
-      ul.innerHTML = list.map(i=>`<li>${esc2(i.text)}<span class="iwho">${esc2(NAMES[i.by]||"Someone")} · ${esc2(when(i.at))}</span></li>`).join("");
+      ul.innerHTML = list.map(i=>{
+        const mine = LOCAL || (ME && i.by===ME);
+        return `<li data-cid="${esc2(i.id)}"><div class="itext">${esc2(i.text)}</div>
+          <div class="imeta"><span class="iwho">${esc2(NAMES[i.by]||"Someone")} · ${esc2(when(i.at))}${i.ed?" · edited":""}</span>
+          ${mine?`<span class="iact"><button type="button" data-edit="${esc2(i.id)}">Edit</button><button type="button" class="danger" data-del="${esc2(i.id)}">Delete</button></span>`:""}
+          </div></li>`;
+      }).join("");
     }
     const bar=c.querySelector("[data-ibar]");
     if(bar && !bar.dataset.built){
@@ -354,9 +374,56 @@ async function star(id){
   try{ await DB.doc("stars/"+ME).set({ids:[...MYSTARS]}); if(LOCAL) paint(); }
   catch(e){ CANWRITE=false; paint(); }
 }
+function findIdea(cid){
+  for(const k in IDEAS){ const f=(IDEAS[k]||[]).find(x=>x.id===cid); if(f) return {card:k,item:f}; }
+  return null;
+}
+async function saveIdea(cid,text){
+  const f=findIdea(cid); if(!f||!DB) return;
+  try{
+    if(LOCAL){ await DB.collection("ideas").doc(cid).set({text}); }
+    else{ await DB.collection("ideas").doc(cid).set({card:f.card,text,by:f.item.by,at:f.item.at,ed:true}); }
+  }catch(_){}
+}
+async function delIdea(cid){
+  const f=findIdea(cid); if(!f||!DB) return;
+  try{ await DB.collection("ideas").doc(cid).delete(); }catch(_){}
+}
 document.addEventListener("click",e=>{
-  const b=e.target.closest("[data-star]");
-  if(b){ e.preventDefault(); e.stopPropagation(); star(b.dataset.star); }
+  const s=e.target.closest("[data-star]");
+  if(s){ e.preventDefault(); e.stopPropagation(); star(s.dataset.star); return; }
+
+  const d=e.target.closest("[data-del]");
+  if(d){
+    e.preventDefault(); e.stopPropagation();
+    if(d.dataset.armed){ delIdea(d.dataset.del); return; }
+    d.dataset.armed="1"; d.textContent="Sure?";
+    setTimeout(()=>{ if(d.isConnected){ delete d.dataset.armed; d.textContent="Delete"; } },3500);
+    return;
+  }
+
+  const ed=e.target.closest("[data-edit]");
+  if(ed){
+    e.preventDefault(); e.stopPropagation();
+    const li=ed.closest("li"), cid=ed.dataset.edit, f=findIdea(cid);
+    if(!li||!f||li.querySelector(".iedit")) return;
+    const box=li.querySelector(".itext"); if(!box) return;
+    const cur=f.item.text;
+    box.outerHTML=`<div class="iedit"><textarea rows="2"></textarea><button type="button" class="sv">Save</button><button type="button" class="cx">Cancel</button></div>`;
+    const wrap=li.querySelector(".iedit"), ta=wrap.querySelector("textarea");
+    ta.value=cur; ta.focus(); ta.setSelectionRange(cur.length,cur.length);
+    li.querySelector(".iact").style.visibility="hidden";
+    wrap.querySelector(".cx").onclick=()=>paint();
+    wrap.querySelector(".sv").onclick=()=>{
+      const v=ta.value.trim();
+      if(!v){ paint(); return; }
+      saveIdea(cid,v);
+    };
+    ta.onkeydown=k=>{
+      if(k.key==="Escape"){ k.preventDefault(); paint(); }
+      if(k.key==="Enter"&&(k.metaKey||k.ctrlKey)){ k.preventDefault(); const v=ta.value.trim(); if(v) saveIdea(cid,v); }
+    };
+  }
 },true);
 
 /* ---------- local mode: stars + comments in this browser ---------- */
@@ -370,15 +437,28 @@ function startLocal(){
   ME="me"; CANWRITE=true;
   MYSTARS=new Set(L.stars||[]);
   STARS={}; MYSTARS.forEach(id=>STARS[id]=new Set(["me"]));
-  IDEAS={}; Object.keys(L.ideas||{}).forEach(k=>{ IDEAS[k]=(L.ideas[k]||[]).map((x,i)=>({id:k+i,text:x.text,by:"me",at:x.at})); });
+  rebuildLocal();
   NAMES.me = L.who || "You";
   DB={ __local:true,
     doc:()=>({ set:async()=>{ L.stars=[...MYSTARS]; lsave(); STARS={}; MYSTARS.forEach(id=>STARS[id]=new Set(["me"])); tally(); } }),
-    collection:()=>({ add:async(d)=>{
-        (L.ideas[d.card]=L.ideas[d.card]||[]).push({text:d.text,at:d.at}); lsave();
-        IDEAS[d.card]=L.ideas[d.card].map((x,i)=>({id:d.card+i,text:x.text,by:"me",at:x.at}));
-        paint(); tally();
-      } }) };
+    collection:()=>({
+      add:async(d)=>{
+        (L.ideas[d.card]=L.ideas[d.card]||[]).push({text:d.text,at:d.at});
+        lsave(); rebuildLocal(); paint(); tally();
+      },
+      doc:(cid)=>({
+        set:async(d)=>{
+          const p=cid.lastIndexOf("#"); const c=cid.slice(0,p), i=+cid.slice(p+1);
+          if(L.ideas[c]&&L.ideas[c][i]){ L.ideas[c][i].text=d.text; L.ideas[c][i].ed=true; }
+          lsave(); rebuildLocal(); paint(); tally();
+        },
+        delete:async()=>{
+          const p=cid.lastIndexOf("#"); const c=cid.slice(0,p), i=+cid.slice(p+1);
+          if(L.ideas[c]){ L.ideas[c].splice(i,1); if(!L.ideas[c].length) delete L.ideas[c]; }
+          lsave(); rebuildLocal(); paint(); tally();
+        }
+      })
+    }) };
   document.body.classList.add("live","local");
   const who=document.getElementById("who");
   who.value=L.who||"";
@@ -395,6 +475,13 @@ function startLocal(){
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
   };
   tally(); paint();
+}
+
+function rebuildLocal(){
+  IDEAS={};
+  Object.keys(L.ideas||{}).forEach(k=>{
+    IDEAS[k]=(L.ideas[k]||[]).map((x,i)=>({id:k+"#"+i,text:x.text,by:"me",at:x.at,ed:!!x.ed}));
+  });
 }
 
 function report(){
@@ -450,7 +537,7 @@ function tally(){
     s.docs.forEach(d=>{
       const v=d.data()||{};
       if(!v.card) return;
-      (IDEAS[v.card]=IDEAS[v.card]||[]).push({id:d.id,text:v.text||"",by:v.by,at:v.at||""});
+      (IDEAS[v.card]=IDEAS[v.card]||[]).push({id:d.id,text:v.text||"",by:v.by,at:v.at||"",ed:!!v.ed});
       if(v.by) who.add(v.by);
     });
     if(user && who.size){
